@@ -1,2 +1,5 @@
 plan.md
 prompt.md
+core/__pycache__
+rendering/__pycache__
+tests/__pycache__

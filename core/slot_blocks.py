@@ -16,9 +16,9 @@ from .constants import (
 def get_slot_block_name(slot_idx: int) -> str:
     """Returns the semantic block name for a given slot index."""
     if SLOT_BG_STATIC[0] <= slot_idx <= SLOT_BG_STATIC[1]:
-        return "background_static"
+        return "bg_static"
     elif SLOT_BG_DYNAMIC[0] <= slot_idx <= SLOT_BG_DYNAMIC[1]:
-        return "background_dynamic"
+        return "bg_dynamic"
     elif SLOT_BODY[0] <= slot_idx <= SLOT_BODY[1]:
         return "body"
     elif SLOT_FACE[0] <= slot_idx <= SLOT_FACE[1]:
@@ -34,9 +34,9 @@ def get_slot_block_name(slot_idx: int) -> str:
 
 def get_slots_in_block(block_name: str) -> List[int]:
     """Returns a list of slot indices for a given block name."""
-    if block_name == "background_static":
+    if block_name == "bg_static":
         return list(range(SLOT_BG_STATIC[0], SLOT_BG_STATIC[1] + 1))
-    elif block_name == "background_dynamic":
+    elif block_name == "bg_dynamic":
         return list(range(SLOT_BG_DYNAMIC[0], SLOT_BG_DYNAMIC[1] + 1))
     elif block_name == "body":
         return list(range(SLOT_BODY[0], SLOT_BODY[1] + 1))
@@ -54,7 +54,7 @@ def get_slots_in_block(block_name: str) -> List[int]:
 def get_delta_max(slot_idx: int) -> float:
     """Returns the maximum deformation (delta) allowed for a given slot."""
     name = get_slot_block_name(slot_idx)
-    if name in ("background_static", "background_dynamic"):
+    if name in ("bg_static", "bg_dynamic"):
         return DELTA_MAX.get("background", 0.0)
     return DELTA_MAX.get(name, 0.0)
 

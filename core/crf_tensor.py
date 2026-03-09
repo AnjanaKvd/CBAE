@@ -33,9 +33,9 @@ class CRFTensor:
     def slot_block(self, index):
         """Returns string label for which semantic block a slot belongs to."""
         if SLOT_BG_STATIC[0] <= index <= SLOT_BG_STATIC[1]:
-            return "background_static"
+            return "bg_static"
         if SLOT_BG_DYNAMIC[0] <= index <= SLOT_BG_DYNAMIC[1]:
-            return "background_dynamic"
+            return "bg_dynamic"
         if SLOT_BODY[0] <= index <= SLOT_BODY[1]:
             return "body"
         if SLOT_FACE[0] <= index <= SLOT_FACE[1]:
