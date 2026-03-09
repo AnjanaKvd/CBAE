@@ -4,4 +4,7 @@ from .synthetic import (
     trapezoid_bezier,
     rounded_rect_bezier,
     arm_bezier,
+    generate_base_character,
+    generate_character_variant,
+    PALETTE,
 )
