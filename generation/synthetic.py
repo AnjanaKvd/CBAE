@@ -401,7 +401,7 @@ def generate_sequence(
 
         frames.append(noisy_crf)
 
-        v = compute_velocity_gt(composed_motion, base_crf, t, dt=0.001)
+        v = compute_velocity_gt(composed_motion, base_crf, t, dt=0.1)
         dp_dts.append(v)
 
     return CRFSequence(frames, dp_dt=np.stack(dp_dts, axis=0))

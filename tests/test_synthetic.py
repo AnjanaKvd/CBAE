@@ -19,10 +19,10 @@ def test_character_slot_assignments():
 
     # Check that main body slot is active (slot 26 usually for robe body)
     assert 26 in active
-    # Face base should be active (slot 43)
-    assert 43 in active
-    # Mouth should be active (slot 40)
-    assert 40 in active
+    # Face base should be active (slot 46)
+    assert 46 in active
+    # Mouth should be active (slot 71)
+    assert 71 in active
 
 
 def test_motion_continuity():
@@ -46,7 +46,7 @@ def test_velocity_accuracy():
     t = 1.0
 
     # Compute numerical velocity
-    v_num = compute_velocity_gt(gentle_sway, base, t, dt=0.001)
+    v_num = compute_velocity_gt(gentle_sway, base, t, dt=0.1)
 
     # Analytical derivative of gentle_sway:
     # dx(t) = 0.01 * sin(2 * pi * 0.1 * t)

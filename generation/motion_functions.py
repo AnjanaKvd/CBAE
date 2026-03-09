@@ -83,7 +83,7 @@ def compose_motions(crf: CRFTensor, t: float, motion_fns: List[Callable]) -> CRF
 
 
 def compute_velocity_gt(
-    motion_fn: Callable, crf_base: CRFTensor, t: float, dt: float = 0.001
+    motion_fn: Callable, crf_base: CRFTensor, t: float, dt: float = 0.1
 ) -> np.ndarray:
     """
     Computes numerical derivative (velocity) of control points using central difference.
