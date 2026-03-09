@@ -22,6 +22,11 @@ class CLIPEncoder(nn.Module):
             self.model, {torch.nn.Linear}, dtype=torch.qint8
         )
         
+        # Fix for open_clip expecting weight.dtype
+        for m in self.model.modules():
+            if hasattr(m, 'mlp') and hasattr(m.mlp, 'c_fc'):
+                m.mlp.c_fc.int8_original_dtype = torch.float32
+        
         # Freeze all parameters
         self.model.eval()
         for param in self.model.parameters():
