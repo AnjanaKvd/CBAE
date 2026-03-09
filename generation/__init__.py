@@ -16,3 +16,11 @@ from .motion_functions import (
     compose_motions,
     compute_velocity_gt,
 )
+
+from .noise_schedule import (
+    NoiseConfig,
+    NOISE_CLEAN,
+    NOISE_ROBUSTNESS,
+    NOISE_BRIDGE,
+    apply_noise,
+)
