@@ -8,3 +8,11 @@ from .synthetic import (
     generate_character_variant,
     PALETTE,
 )
+
+from .motion_functions import (
+    breathing_motion,
+    eye_blink,
+    gentle_sway,
+    compose_motions,
+    compute_velocity_gt,
+)
