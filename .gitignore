@@ -3,3 +3,4 @@ prompt.md
 core/__pycache__
 rendering/__pycache__
 tests/__pycache__
+generation/__pycache__
