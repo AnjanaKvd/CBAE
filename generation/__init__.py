@@ -7,6 +7,9 @@ from .synthetic import (
     generate_base_character,
     generate_character_variant,
     PALETTE,
+    generate_sequence,
+    generate_dataset,
+    generate_template_library,
 )
 
 from .motion_functions import (
@@ -24,3 +27,27 @@ from .noise_schedule import (
     NOISE_BRIDGE,
     apply_noise,
 )
+
+__all__ = [
+    "circle_bezier",
+    "oval_bezier",
+    "trapezoid_bezier",
+    "rounded_rect_bezier",
+    "arm_bezier",
+    "generate_base_character",
+    "generate_character_variant",
+    "PALETTE",
+    "generate_sequence",
+    "generate_dataset",
+    "generate_template_library",
+    "breathing_motion",
+    "eye_blink",
+    "gentle_sway",
+    "compose_motions",
+    "compute_velocity_gt",
+    "NoiseConfig",
+    "NOISE_CLEAN",
+    "NOISE_ROBUSTNESS",
+    "NOISE_BRIDGE",
+    "apply_noise",
+]

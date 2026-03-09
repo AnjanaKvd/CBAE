@@ -9,7 +9,6 @@ from .constants import (
     SLOT_SECONDARY,
     SLOT_DYNAMIC,
     DELTA_MAX,
-    N_SLOTS,
 )
 
 

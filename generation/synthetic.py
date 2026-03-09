@@ -1,5 +1,10 @@
 import numpy as np
-from core.crf_tensor import CRFTensor
+import os
+import json
+from tqdm import tqdm
+from core.crf_tensor import CRFTensor, CRFSequence
+from generation.noise_schedule import NoiseConfig, apply_noise
+from generation.motion_functions import compute_velocity_gt
 
 
 def oval_bezier(cx, cy, rx, ry, n_ctrl=12):
@@ -370,3 +375,77 @@ def generate_character_variant(base: CRFTensor, seed: int) -> CRFTensor:
     variant.P = np.clip(variant.P, 0.0, 1.0).astype(np.float16)
 
     return variant
+
+
+def generate_sequence(
+    character_fn, motion_fns, noise_config: NoiseConfig, n_frames=192, fps=24
+) -> CRFSequence:
+    """Generates a complete sequence with truth velocities."""
+    base_crf = character_fn()
+    frames = []
+    dp_dts = []
+
+    rng = np.random.default_rng()
+
+    # Create composed motion wrapper locally to pass to velocity_gt
+    # (Avoiding circular import inside function by doing inline)
+    def composed_motion(crf, t_val):
+        from .motion_functions import compose_motions
+
+        return compose_motions(crf, t_val, motion_fns)
+
+    for i in range(n_frames):
+        t = i / fps
+        clean_crf = composed_motion(base_crf, t)
+        noisy_crf = apply_noise(clean_crf, noise_config, rng)
+
+        frames.append(noisy_crf)
+
+        v = compute_velocity_gt(composed_motion, base_crf, t, dt=0.001)
+        dp_dts.append(v)
+
+    return CRFSequence(frames, dp_dt=np.stack(dp_dts, axis=0))
+
+
+def generate_dataset(n_sequences: int, noise_config: NoiseConfig, output_path: str):
+    """Generates an entire dataset to HDF5."""
+    os.makedirs(output_path, exist_ok=True)
+    from .motion_functions import breathing_motion, eye_blink, gentle_sway
+
+    print(f"Generating {n_sequences} sequences for {noise_config.stage} stage...")
+    for i in tqdm(range(n_sequences)):
+        seed = i
+
+        def make_char():
+            base = generate_base_character(style="robe")
+            return generate_character_variant(base, seed)
+
+        seq = generate_sequence(
+            character_fn=make_char,
+            motion_fns=[breathing_motion, gentle_sway, eye_blink],
+            noise_config=noise_config,
+            n_frames=192,
+            fps=24,
+        )
+        filepath = os.path.join(output_path, f"seq_{i:04d}_{noise_config.stage}.h5")
+        seq.to_hdf5(filepath)
+
+
+def generate_template_library() -> dict:
+    """Generate 50 base poses for the dictionary initialization."""
+    out_dir = os.path.join("data", "templates", "base_poses")
+    os.makedirs(out_dir, exist_ok=True)
+    templates = {}
+
+    base = generate_base_character(style="robe")
+    for i in range(50):
+        variant = generate_character_variant(base, seed=1000 + i)
+        filename = f"template_{i:03d}.json"
+        filepath = os.path.join(out_dir, filename)
+
+        with open(filepath, "w") as f:
+            json.dump(variant.to_json(), f, indent=2)
+
+        templates[filename] = f"Template pose {i}"
+
+    return templates
