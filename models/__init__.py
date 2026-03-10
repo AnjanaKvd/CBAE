@@ -4,6 +4,7 @@ from .slot_conditioning import SlotConditioner
 from .deformation_mlp import TemplateLibrary, DeformationMLP, initialize_crf
 from .aliveness import AlivenessMLP, InitialStateCombiner, build_initial_state
 from .sequence import SequenceModel
+from .color_mlp import ColorPredictionMLP
 
 __all__ = [
     "CLIPEncoder",
@@ -16,8 +17,10 @@ __all__ = [
     "AlivenessMLP",
     "InitialStateCombiner",
     "build_initial_state",
-    "SequenceModel"
+    "SequenceModel",
+    "ColorPredictionMLP"
 ]
+
 
 
 
