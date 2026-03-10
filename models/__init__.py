@@ -3,6 +3,7 @@ from .audio_alignment import AudioAlignmentLayer
 from .slot_conditioning import SlotConditioner
 from .deformation_mlp import TemplateLibrary, DeformationMLP, initialize_crf
 from .aliveness import AlivenessMLP, InitialStateCombiner, build_initial_state
+from .sequence import SequenceModel
 
 __all__ = [
     "CLIPEncoder",
@@ -14,7 +15,9 @@ __all__ = [
     "initialize_crf",
     "AlivenessMLP",
     "InitialStateCombiner",
-    "build_initial_state"
+    "build_initial_state",
+    "SequenceModel"
 ]
+
 
 
