@@ -5,7 +5,7 @@ from models.color_mlp import ColorPredictionMLP
 from rendering.diff_rasterizer import DiffRasterizer
 
 class CBAE_EndToEnd(nn.Module):
-    def __init__(self, render_width=512, render_height=512, use_diffvg=False):
+    def __init__(self, render_width=256, render_height=256, use_diffvg=False):
         """
         The top-level overarching architecture connecting encoders, ODE logic, and rasterization rendering logically seamlessly propagating end-to-end backprop pipelines cleanly.
         """
@@ -54,10 +54,13 @@ class CBAE_EndToEnd(nn.Module):
             
             batch_frames = []
             for b in range(batch_size):
+                # Apply differentiable smooth aliveness filter directly to alpha
+                smooth_alpha = alpha * torch.sigmoid(aliveness_t[b])
+
                 frame = self.rasterizer(
                     P=P_t[b], 
                     c=colors[b], 
-                    alpha=alpha, 
+                    alpha=smooth_alpha, 
                     alive=aliveness_t[b], 
                     z=z, 
                     csg=csg, 
