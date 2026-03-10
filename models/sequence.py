@@ -88,4 +88,4 @@ class SequenceModel(nn.Module):
         )
         
         # trajectory shape: (192, batch_size, 3200)
-        return trajectory
+        return trajectory, slot_embs, text_emb, base_crf

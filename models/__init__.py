@@ -5,6 +5,7 @@ from .deformation_mlp import TemplateLibrary, DeformationMLP, initialize_crf
 from .aliveness import AlivenessMLP, InitialStateCombiner, build_initial_state
 from .sequence import SequenceModel
 from .color_mlp import ColorPredictionMLP
+from .cbae_model import CBAE_EndToEnd
 
 __all__ = [
     "CLIPEncoder",
@@ -18,8 +19,10 @@ __all__ = [
     "InitialStateCombiner",
     "build_initial_state",
     "SequenceModel",
-    "ColorPredictionMLP"
+    "ColorPredictionMLP",
+    "CBAE_EndToEnd"
 ]
+
 
 
 
