@@ -19,7 +19,7 @@ def test_sequence_model_forward_shape():
     # By default, SequenceModel has no external dependencies for just the forward shape test.
     # It will use the initialized random weights.
     
-    trajectory = model(prompt, audio)
+    trajectory, slot_embs, text_emb, base_crf = model(prompt, audio)
     
     # Expected shape: (192 time steps, 2 batch, 3200 state_dim)
     assert trajectory.shape == (192, batch_size, 3200)
