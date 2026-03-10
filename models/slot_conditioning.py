@@ -63,9 +63,12 @@ class MouthConditioningMLP(nn.Module):
         """
         # Broadcast text and audio to match slot_emb shape if they are (batch, dim)
         if text_emb.dim() < slot_emb.dim():
-            text_emb = text_emb.unsqueeze(1).expand(-1, slot_emb.size(1), -1)
+            text_emb = text_emb.unsqueeze(1)
+        text_emb = text_emb.expand(-1, slot_emb.size(1), -1)
+            
         if audio_emb.dim() < slot_emb.dim():
-            audio_emb = audio_emb.unsqueeze(1).expand(-1, slot_emb.size(1), -1)
+            audio_emb = audio_emb.unsqueeze(1)
+        audio_emb = audio_emb.expand(-1, slot_emb.size(1), -1)
             
         x = torch.cat([slot_emb, text_emb, audio_emb], dim=-1)
         return self.net(x)

@@ -6,8 +6,8 @@ from models.sequence import SequenceModel
 def test_sequence_model_forward_shape():
     model = SequenceModel()
     
-    prompt = "A bouncing red ball"
     batch_size = 2
+    prompt = ["A bouncing red ball"] * batch_size
     # mock audio tensor (batch, 48000) -> 3 seconds of 16kHz audio
     audio = torch.randn(batch_size, 48000)
     

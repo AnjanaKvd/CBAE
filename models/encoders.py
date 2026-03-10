@@ -78,8 +78,17 @@ class WhisperEncoder(nn.Module):
         """
         # Ensure 16kHz sampling rate is explicitly handled via the feature extractor
         with torch.no_grad():
+            if isinstance(audio_array, torch.Tensor):
+                audio_array = audio_array.cpu().numpy()
+            
+            # The feature extractor expects a list of arrays for batched input
+            if audio_array.ndim == 2:
+                audio_input = [x for x in audio_array]
+            else:
+                audio_input = audio_array
+
             inputs = self.feature_extractor(
-                audio_array, 
+                audio_input, 
                 sampling_rate=sr, 
                 return_tensors="pt"
             )
