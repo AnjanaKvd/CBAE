@@ -37,9 +37,6 @@ def run_baseline_optimization(output_dir="output/baseline_test", steps=2000, lr=
     # ---------------------------------------------------------
     print("Initializing random starting state parameters...")
     
-    # Randomly initialize properties matching the active slots of the target exactly
-    active_mask = target_crf.active_slots()
-    
     # Starting values (randomized within constrained space for control points and color)
     P_init = torch.rand((128, 12, 2), device=device)
     c_init = torch.rand((128, 3), device=device)
