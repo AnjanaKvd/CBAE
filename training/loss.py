@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from rendering.diff_rasterizer import bezier_to_polyline_torch
-import torch.nn.functional as F
+
+
 
 class CBAELossWrapper(nn.Module):
     def __init__(self, w_render=1.0, w_bcs=0.1, w_crs=0.1, w_temp=0.5, w_clip=0.1):
@@ -25,11 +26,13 @@ class CBAELossWrapper(nn.Module):
         aliveness: (batch, T, slots) - raw logits
         """
         batch, T, slots, _, _ = P.shape
-        # Flatten time into batch mapping shapes reliably evaluating the polylines cleanly
-        P_flat = P.view(batch * T, slots, 12, 2)
+        # Flatten batch, time, and slots into a single dimension for bezier_to_polyline_torch
+        # which expects (n_slots, 12, 2) — a 3D tensor
+        P_flat = P.reshape(batch * T * slots, 12, 2)
         
         # We sample 30 discrete segments mapping curve trajectories explicitly approximating curvature derivatives mathematically
-        polylines = bezier_to_polyline_torch(P_flat, n_samples=30) # (batch*T, slots, 30, 2)
+        polylines_flat = bezier_to_polyline_torch(P_flat, n_samples=30) # (batch*T*slots, 30, 2)
+        polylines = polylines_flat.reshape(batch * T, slots, 30, 2)
         
         # Approximate curvature logically mathematically tracking diffs
         # 1st derivative (velocity along curve u parameter)
@@ -55,7 +58,7 @@ class CBAELossWrapper(nn.Module):
         K = kappa.mean(dim=-1) # (batch*T, slots)
         
         # Reshape to time steps cleanly extracting matrices
-        K_time = K.view(batch, T, slots)
+        K_time = K.reshape(batch, T, slots)
         
         # Temporal differences 
         dK = torch.abs(K_time[:, 1:, :] - K_time[:, :-1, :]) # (batch, T-1, slots)

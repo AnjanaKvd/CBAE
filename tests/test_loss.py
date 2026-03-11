@@ -67,15 +67,20 @@ def test_loss_is_non_negative(forward_outputs):
     assert loss_total.item() >= 0.0, f"Total loss is negative: {loss_total.item()}"
 
 
-def test_backward_pass(device, model_and_loss):
+def test_backward_pass(device):
     """Backward pass through the loss should not raise errors."""
-    model, loss_fn = model_and_loss
-    batch_size = 2
-    prompt = ["A gentle blue character breathing", "A red block jumping"]
-    audio = torch.randn(batch_size, 16000 * 8).to(device)
-    gt_video_mock = torch.rand(batch_size, 192, 32, 32, 3).to(device)
+    # Use smaller dimensions to avoid OOM on CPU
+    model = CBAE_EndToEnd(render_width=16, render_height=16).to(device)
+    loss_fn = CBAELossWrapper().to(device)
+    batch_size = 1
+    prompt = ["A gentle blue character breathing"]
+    audio = torch.randn(batch_size, 16000 * 2).to(device)  # 2 seconds
+    num_frames = 48  # ~2s at 24fps
+    gt_video_mock = torch.rand(batch_size, num_frames, 16, 16, 3).to(device)
 
     video_tensor, topology = model(prompt, audio)
+    # Trim gt to match actual output length
+    gt_video_mock = gt_video_mock[:, :video_tensor.shape[1], :, :, :]
     loss_total, _ = loss_fn((video_tensor, topology), gt_video_mock)
     loss_total.backward()  # Should not raise
 

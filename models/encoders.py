@@ -17,16 +17,6 @@ class CLIPEncoder(nn.Module):
         # Note: OpenCLIP encapsulates both, we just retain what we need dynamically.
         self.model = model
         
-        # Apply INT8 dynamic quantization targeting linear layers
-        self.model = torch.quantization.quantize_dynamic(
-            self.model, {torch.nn.Linear}, dtype=torch.qint8
-        )
-        
-        # Fix for open_clip expecting weight.dtype
-        for m in self.model.modules():
-            if hasattr(m, 'mlp') and hasattr(m.mlp, 'c_fc'):
-                m.mlp.c_fc.int8_original_dtype = torch.float32
-        
         # Freeze all parameters
         self.model.eval()
         for param in self.model.parameters():
@@ -60,11 +50,6 @@ class WhisperEncoder(nn.Module):
         self.feature_extractor = WhisperFeatureExtractor.from_pretrained("openai/whisper-tiny")
         full_model = WhisperModel.from_pretrained("openai/whisper-tiny").to(device)
         self.encoder = full_model.encoder
-        
-        # Apply INT8 dynamic quantization targeting linear layers
-        self.encoder = torch.quantization.quantize_dynamic(
-            self.encoder, {torch.nn.Linear}, dtype=torch.qint8
-        )
         
         # Freeze all parameters
         self.encoder.eval()
