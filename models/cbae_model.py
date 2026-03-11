@@ -34,8 +34,8 @@ class CBAE_EndToEnd(nn.Module):
         
         # 2. Extract explicit configuration arrays logically independent from time (e.g global scale or Z indices)
         alpha = torch.from_numpy(base_crf.alpha).float().to(device)
-        z = torch.from_numpy(base_crf.z_index).float().to(device)
-        csg = torch.from_numpy(base_crf.is_csg_subtract).bool().to(device)
+        z = torch.from_numpy(base_crf.z).float().to(device)
+        csg = torch.from_numpy(base_crf.csg).bool().to(device)
         
         # 3. Retrieve explicitly bounded RGB predictions conditionally
         colors = self.color_mlp(slot_embs, text_emb) # (batch, 128, 3)
@@ -49,6 +49,8 @@ class CBAE_EndToEnd(nn.Module):
             state_t = trajectory[t] # (batch_size, 3200)
             
             # Unflatten explicit geometries
+            # Ensure correct unflattening to extract (batch_size, 128, 12, 2)
+            # P_t takes the first 3072 elements per batch item
             P_t = state_t[:, :3072].view(batch_size, 128, 12, 2)
             aliveness_t = state_t[:, 3072:].view(batch_size, 128)
             
@@ -78,4 +80,21 @@ class CBAE_EndToEnd(nn.Module):
         # Then transpose to match specs explicitly: (batch_size, 192, H, W, 3)
         video_tensor = torch.stack(video_frames, dim=0).transpose(0, 1)
         
-        return video_tensor
+        # Prepare topological state dictionary for loss computation natively preserving graphs
+        # Extract explicit bounding maps mapping back to sequence parameters
+        # P shapes needed: (batch, 192, 128, 12, 2)
+        P_seq = trajectory[:, :, :3072].view(time_steps, batch_size, 128, 12, 2).transpose(0, 1)
+        
+        # aliveness shapes needed: (batch, 192, 128)
+        aliveness_seq = trajectory[:, :, 3072:].view(time_steps, batch_size, 128).transpose(0, 1)
+        
+        topology = {
+            'P': P_seq,               # (batch, T, slots, 12, 2)
+            'aliveness': aliveness_seq, # (batch, T, slots)
+            'colors': colors,          # (batch, slots, 3) 
+            'alpha': alpha,
+            'z': z,
+            'csg': csg
+        }
+        
+        return video_tensor, topology

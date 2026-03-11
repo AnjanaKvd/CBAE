@@ -142,8 +142,9 @@ def initialize_crf(template_library: TemplateLibrary,
     Creates the starting CRFTensor for inference integrating templates and MLP predictions.
     Currently operates on batch_size=1 semantics for explicit single sequence generation.
     """
-    # 1. Retrieve the nearest semantic template shape state
-    template_crf, score = template_library.retrieve(text_emb)
+    # 1. Retrieve the nearest semantic template shape state using the first sequence element
+    first_text_emb = text_emb[0].unsqueeze(0) if text_emb.dim() > 1 else text_emb
+    template_crf, score = template_library.retrieve(first_text_emb)
     
     # Ensure batched format for MLP
     if text_emb.dim() == 1:

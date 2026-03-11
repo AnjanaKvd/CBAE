@@ -29,11 +29,11 @@ def test_cbae_end_to_end_forward():
     # 3. Text embedding: (batch_size, 512)
     mock_text_emb = torch.randn(batch_size, 512)
     
-    # 4. Base CRFTensor: Needs alpha, z_index, is_csg_subtract numpy arrays
+    # 4. Base CRFTensor: Needs alpha, z, csg numpy arrays
     mock_base_crf = CRFTensor()
     mock_base_crf.alpha = np.ones(N_SLOTS, dtype=np.float32)
-    mock_base_crf.z_index = np.zeros(N_SLOTS, dtype=np.float32)
-    mock_base_crf.is_csg_subtract = np.zeros(N_SLOTS, dtype=bool)
+    mock_base_crf.z = np.zeros(N_SLOTS, dtype=np.float32)
+    mock_base_crf.csg = np.zeros(N_SLOTS, dtype=bool)
     
     with patch.object(model.seq_model, 'forward', return_value=(mock_trajectory, mock_slot_embs, mock_text_emb, mock_base_crf)):
     
@@ -42,7 +42,7 @@ def test_cbae_end_to_end_forward():
         audio = torch.randn(batch_size, 48000)
         
         # Run the forward pass
-        video_tensor = model(prompt, audio)
+        video_tensor, topology = model(prompt, audio)
         
         # Assert output shape is (1, 2, 256, 256, 3) representing (batch, frames, H, W, channels)
         assert video_tensor.shape == (batch_size, time_steps, 256, 256, 3)
