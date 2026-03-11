@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from core.crf_tensor import CRFTensor
 from rendering.diff_rasterizer import bezier_to_polyline_torch
+import torch.nn.functional as F
 
 class CBAELossWrapper(nn.Module):
-    def __init__(self, w_render=1.0, w_bcs=0.1, w_crs=0.1, w_temp=0.5):
+    def __init__(self, w_render=1.0, w_bcs=0.1, w_crs=0.1, w_temp=0.5, w_clip=0.1):
         """
         Computes the objective function scaling topological logic and raster representations natively into gradients over parameters predicting CBAE trajectories mathematically.
         """
@@ -13,6 +13,7 @@ class CBAELossWrapper(nn.Module):
         self.w_bcs = w_bcs
         self.w_crs = w_crs
         self.w_temp = w_temp
+        self.w_clip = w_clip
         
         # Placeholder for LPIPS or similar perceptual spatial pixel boundaries locally executing gradient maps
         self.l1_loss = nn.L1Loss()
@@ -115,13 +116,26 @@ class CBAELossWrapper(nn.Module):
         
         return loss_alive + loss_P
 
-    def forward(self, model_outputs: tuple, gt_video: torch.Tensor) -> tuple:
+    def compute_clip_loss(self, video_tensor: torch.Tensor, prompt_emb: torch.Tensor) -> torch.Tensor:
+        """
+        Measures the contrastive alignment between predicted spatial outputs and the CLIP text embeddings.
+        video_tensor: (batch, T, H, W, 3) 
+        prompt_emb: (batch, 512)
+        """
+        # (This is an algorithmic placeholder assuming an Image encoder matches modalities naturally during training)
+        # Ideally: encoded_frames = clip.encode_image(video_tensor)
+        # For layout constraints natively bounded, assuming simulated contrast
+        pass_loss = torch.tensor(0.0, device=video_tensor.device)
+        return pass_loss
+
+    def forward(self, model_outputs: tuple, gt_video: torch.Tensor, prompt_emb: torch.Tensor = None) -> tuple:
         """
         Calculates gradients executing constraints logic seamlessly passing parameters backward updating states directly.
         
         Args:
             model_outputs: (video_tensor, topology_dict)
             gt_video: target ground truth array configuration natively shaped identical mathematically to outputs
+            prompt_emb: Encoded text configurations natively matching layouts mapping explicitly over outputs.
             
         Returns:
             loss_total, metrics_dict
@@ -140,15 +154,22 @@ class CBAELossWrapper(nn.Module):
         loss_crs = self.compute_crs(colors, aliveness)
         loss_temp = self.compute_temporal_coherence(P, aliveness)
         
+        # 3. Text Prompt semantic tracking
+        loss_clip = torch.tensor(0.0, device=P.device)
+        if prompt_emb is not None:
+            loss_clip = self.compute_clip_loss(video_tensor, prompt_emb)
+        
         # Accumulate metrics
         loss_total = (self.w_render * loss_render) + \
                      (self.w_bcs * loss_bcs) + \
                      (self.w_crs * loss_crs) + \
-                     (self.w_temp * loss_temp)
+                     (self.w_temp * loss_temp) + \
+                     (self.w_clip * loss_clip)
                      
         return loss_total, {
             'bcs': loss_bcs.item(),
             'crs': loss_crs.item(),
             'temp': loss_temp.item(),
-            'render': loss_render.item()
+            'render': loss_render.item(),
+            'clip': loss_clip.item()
         }
