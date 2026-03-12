@@ -72,7 +72,11 @@ def compute_bcs(topology: Dict[str, torch.Tensor]) -> float:
     batch, T, slots, _, _ = P.shape
 
     P_flat = P.reshape(batch * T, slots, 12, 2)
-    polylines = bezier_to_polyline_torch(P_flat, n_samples=30)
+    # bezier_to_polyline_torch expects (N, 12, 2), so flatten batch*T*slots
+    P_flat2 = P_flat.reshape(batch * T * slots, 12, 2)
+    polylines_flat = bezier_to_polyline_torch(P_flat2, n_samples=30)
+    # Reshape back to (batch*T, slots, 30, 2)
+    polylines = polylines_flat.reshape(batch * T, slots, 30, 2)
 
     # 1st and 2nd derivatives along curve parameter u
     dP_du = polylines[:, :, 1:, :] - polylines[:, :, :-1, :]
