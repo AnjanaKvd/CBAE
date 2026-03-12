@@ -13,8 +13,9 @@ class SequenceModel(nn.Module):
     """
     Top-level PyTorch Module assembling the complete CBAE Neural ODE Sequence pipeline.
     """
-    def __init__(self):
+    def __init__(self, n_steps=192):
         super().__init__()
+        self.n_steps = n_steps
         # 1. Encoders
         self.clip = CLIPEncoder()
         self.whisper = WhisperEncoder()
@@ -49,6 +50,13 @@ class SequenceModel(nn.Module):
         """
         device = next(self.ode_fx.parameters()).device
         
+        # Normalize prompt to a list matching the batch size
+        batch_size = audio.size(0)
+        if isinstance(prompt, str):
+            prompt = [prompt] * batch_size
+        elif len(prompt) == 1 and batch_size > 1:
+            prompt = prompt * batch_size
+        
         # 1. Encode Text & Audio
         text_emb = self.clip.encode_text(prompt).to(device)
         audio_raw_emb = self.whisper.encode_audio(audio)
@@ -77,8 +85,8 @@ class SequenceModel(nn.Module):
         initial_state = self.state_combiner(base_crf, aliveness_logits)
         initial_state = initial_state.to(device)
         
-        # 7. Use torchdiffeq.odeint with RK4 to integrate ODEFx from t=0 to t=8.0 over 192 steps. 
-        t_span = torch.linspace(0.0, 8.0, 192, device=device)
+        # 7. Use torchdiffeq.odeint with RK4 to integrate ODEFx from t=0 to t=8.0
+        t_span = torch.linspace(0.0, 8.0, self.n_steps, device=device)
         
         trajectory = odeint(
             func=self.ode_fx,

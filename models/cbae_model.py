@@ -5,12 +5,12 @@ from models.color_mlp import ColorPredictionMLP
 from rendering.diff_rasterizer import DiffRasterizer
 
 class CBAE_EndToEnd(nn.Module):
-    def __init__(self, render_width=256, render_height=256, use_diffvg=False):
+    def __init__(self, render_width=256, render_height=256, use_diffvg=False, n_steps=192):
         """
         The top-level overarching architecture connecting encoders, ODE logic, and rasterization rendering logically seamlessly propagating end-to-end backprop pipelines cleanly.
         """
         super().__init__()
-        self.seq_model = SequenceModel()
+        self.seq_model = SequenceModel(n_steps=n_steps)
         self.color_mlp = ColorPredictionMLP()
         self.rasterizer = DiffRasterizer(use_diffvg=use_diffvg, fallback_softness=0.01)
         self.width = render_width
