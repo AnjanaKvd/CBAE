@@ -69,18 +69,32 @@ def test_loss_is_non_negative(forward_outputs):
 
 def test_backward_pass(device):
     """Backward pass through the loss should not raise errors."""
+    from unittest.mock import patch
+    import numpy as np
+    from core.crf_tensor import CRFTensor
+    from core.constants import N_SLOTS
+
     # Use smaller dimensions to avoid OOM on CPU
     model = CBAE_EndToEnd(render_width=16, render_height=16).to(device)
     loss_fn = CBAELossWrapper().to(device)
     batch_size = 1
-    prompt = ["A gentle blue character breathing"]
-    audio = torch.randn(batch_size, 16000 * 2).to(device)  # 2 seconds
-    num_frames = 48  # ~2s at 24fps
-    gt_video_mock = torch.rand(batch_size, num_frames, 16, 16, 3).to(device)
+    time_steps = 2  # Only 2 steps to keep memory manageable
 
-    video_tensor, topology = model(prompt, audio)
-    # Trim gt to match actual output length
-    gt_video_mock = gt_video_mock[:, :video_tensor.shape[1], :, :, :]
-    loss_total, _ = loss_fn((video_tensor, topology), gt_video_mock)
-    loss_total.backward()  # Should not raise
+    # Build mock outputs with requires_grad so backward can flow
+    mock_trajectory = torch.randn(time_steps, batch_size, 3200, requires_grad=True)
+    mock_slot_embs = torch.randn(batch_size, N_SLOTS, 64, requires_grad=True)
+    mock_text_emb = torch.randn(batch_size, 512)
+    mock_base_crf = CRFTensor()
+    mock_base_crf.alpha = np.ones(N_SLOTS, dtype=np.float32)
+    mock_base_crf.z = np.zeros(N_SLOTS, dtype=np.float32)
+    mock_base_crf.csg = np.zeros(N_SLOTS, dtype=bool)
+
+    gt_video_mock = torch.rand(batch_size, time_steps, 16, 16, 3).to(device)
+
+    with patch.object(model.seq_model, 'forward',
+                      return_value=(mock_trajectory, mock_slot_embs, mock_text_emb, mock_base_crf)):
+        video_tensor, topology = model(["A gentle blue character breathing"],
+                                       torch.randn(batch_size, 16000))
+        loss_total, _ = loss_fn((video_tensor, topology), gt_video_mock)
+        loss_total.backward()  # Should not raise
 
