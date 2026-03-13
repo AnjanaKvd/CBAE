@@ -8,3 +8,4 @@ demos/__pycache__
 models/__pycache__
 training/__pycache__
 evaluation/__pycache__
+data/__pycache__
