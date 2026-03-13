@@ -1,13 +1,20 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from rendering.diff_rasterizer import bezier_to_polyline_torch
 
 
 
 class CBAELossWrapper(nn.Module):
-    def __init__(self, w_render=1.0, w_bcs=0.1, w_crs=0.1, w_temp=0.5, w_clip=0.1):
+    def __init__(self, w_render=1.0, w_bcs=0.1, w_crs=0.1, w_temp=0.5, w_clip=0.1,
+                 clip_model=None, clip_preprocess=None):
         """
-        Computes the objective function scaling topological logic and raster representations natively into gradients over parameters predicting CBAE trajectories mathematically.
+        Combined loss for CBAE training: render L1 + BCS + CRS + temporal coherence + CLIP contrastive.
+
+        Args:
+            clip_model: Optional open_clip model instance (shared from CLIPEncoder.model).
+                        If None, CLIP loss returns 0.0 (backward-compatible).
+            clip_preprocess: Optional CLIP image preprocessing transform.
         """
         super().__init__()
         self.w_render = w_render
@@ -15,8 +22,10 @@ class CBAELossWrapper(nn.Module):
         self.w_crs = w_crs
         self.w_temp = w_temp
         self.w_clip = w_clip
-        
-        # Placeholder for LPIPS or similar perceptual spatial pixel boundaries locally executing gradient maps
+
+        self.clip_model = clip_model
+        self.clip_preprocess = clip_preprocess
+
         self.l1_loss = nn.L1Loss()
         
     def compute_bcs(self, P: torch.Tensor, aliveness: torch.Tensor) -> torch.Tensor:
@@ -121,15 +130,56 @@ class CBAELossWrapper(nn.Module):
 
     def compute_clip_loss(self, video_tensor: torch.Tensor, prompt_emb: torch.Tensor) -> torch.Tensor:
         """
-        Measures the contrastive alignment between predicted spatial outputs and the CLIP text embeddings.
-        video_tensor: (batch, T, H, W, 3) 
-        prompt_emb: (batch, 512)
+        Contrastive CLIP loss: encodes sampled video frames through CLIP ViT image
+        encoder and measures cosine similarity with the text embedding.
+
+        Args:
+            video_tensor: (batch, T, H, W, 3) rendered frames in [0, 1]
+            prompt_emb: (batch, 512) normalized CLIP text embedding
+
+        Returns:
+            Scalar loss = 1 - mean_cosine_similarity  (lower = better alignment).
+            Returns 0.0 if no clip_model was provided (backward-compatible).
         """
-        # (This is an algorithmic placeholder assuming an Image encoder matches modalities naturally during training)
-        # Ideally: encoded_frames = clip.encode_image(video_tensor)
-        # For layout constraints natively bounded, assuming simulated contrast
-        pass_loss = torch.tensor(0.0, device=video_tensor.device)
-        return pass_loss
+        if self.clip_model is None:
+            return torch.tensor(0.0, device=video_tensor.device)
+
+        batch, T, H, W, C = video_tensor.shape
+
+        # Sample K=8 evenly spaced frames (every 24th from 192)
+        K = min(8, T)
+        frame_indices = torch.linspace(0, T - 1, K).long()
+        sampled = video_tensor[:, frame_indices]  # (batch, K, H, W, 3)
+
+        # Reshape to (batch*K, 3, H, W) for interpolation
+        frames = sampled.reshape(batch * K, H, W, C).permute(0, 3, 1, 2)  # (B*K, 3, H, W)
+
+        # Resize to CLIP input size (224×224) — bilinear for differentiability
+        frames_224 = F.interpolate(frames, size=(224, 224), mode='bilinear', align_corners=False)
+
+        # CLIP ImageNet normalization (mean/std from OpenAI CLIP)
+        mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=frames_224.device).view(1, 3, 1, 1)
+        std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=frames_224.device).view(1, 3, 1, 1)
+        frames_norm = (frames_224 - mean) / std
+
+        # Encode frames through CLIP image encoder
+        image_emb = self.clip_model.encode_image(frames_norm)  # (B*K, 512)
+        image_emb = F.normalize(image_emb.float(), dim=-1)
+        image_emb = image_emb.reshape(batch, K, -1)  # (batch, K, 512)
+
+        # Mean frame embedding per batch item
+        mean_image_emb = image_emb.mean(dim=1)  # (batch, 512)
+        mean_image_emb = F.normalize(mean_image_emb, dim=-1)
+
+        # Normalize text embedding
+        prompt_emb_norm = F.normalize(prompt_emb.float(), dim=-1)
+
+        # Cosine similarity per batch item
+        cos_sim = F.cosine_similarity(mean_image_emb, prompt_emb_norm, dim=-1)  # (batch,)
+
+        # Loss: 1 - mean similarity (lower loss = better alignment)
+        loss = (1.0 - cos_sim.mean())
+        return loss
 
     def forward(self, model_outputs: tuple, gt_video: torch.Tensor, prompt_emb: torch.Tensor = None) -> tuple:
         """

@@ -18,83 +18,72 @@ class CBAE_EndToEnd(nn.Module):
         
     def forward(self, prompt: str, audio: torch.Tensor) -> torch.Tensor:
         """
-        Executes full pipeline computing explicit geometric state topologies temporally mapping them across 192 images natively handling differentiable render loops.
-        
+        Full CBAE forward pass: encode → ODE integrate → rasterize.
+
         Args:
-            prompt: Text conditional bounds
-            audio: Sequence conditional bound
-            
+            prompt: Text condition
+            audio: Raw audio waveform tensor
+
         Returns:
-            video_tensor: Differentiable array sequence natively sized (batch_size, 192, height, width, 3)
+            video_tensor: (batch_size, T, height, width, 3)
+            topology: dict with P, aliveness, colors, alpha, z, csg
         """
         device = next(self.parameters()).device
-        
-        # 1. Integrate Explicit Geometries (RK4 Neural ODE mapped shapes)
+
+        # 1. Integrate geometries via Neural ODE
         trajectory, slot_embs, text_emb, base_crf = self.seq_model(prompt, audio)
-        
-        # 2. Extract explicit configuration arrays logically independent from time (e.g global scale or Z indices)
+
+        # 2. Extract static properties from base CRF (shared across all timesteps)
         alpha = torch.from_numpy(base_crf.alpha).float().to(device)
         z = torch.from_numpy(base_crf.z).float().to(device)
         csg = torch.from_numpy(base_crf.csg).bool().to(device)
-        
-        # 3. Retrieve explicitly bounded RGB predictions conditionally
-        colors = self.color_mlp(slot_embs, text_emb) # (batch, 128, 3)
-        
+
+        # 3. Predict colors (time-independent)
+        colors = self.color_mlp(slot_embs, text_emb)  # (batch, 128, 3)
+
         time_steps, batch_size, _ = trajectory.shape
+
+        # 4. Pre-compute all P and aliveness for all timesteps at once
+        # trajectory: (T, batch, 3200) -> unflatten once
+        P_all = trajectory[:, :, :3072].reshape(time_steps, batch_size, 128, 12, 2)
+        aliveness_all = trajectory[:, :, 3072:].reshape(time_steps, batch_size, 128)
+
+        # Pre-compute smooth alpha for all timesteps and batches: (T, batch, 128)
+        smooth_alpha_all = alpha.unsqueeze(0).unsqueeze(0) * torch.sigmoid(aliveness_all)
+
+        # 5. Rasterize — iterate over timesteps, batch items handled individually
+        # (compositing is inherently sequential per-frame)
         video_frames = []
-        
-        # 4. Rasterization Compositing Sequence
-        # DiffRasterizer executes 2D composites natively on individual configurations sequentially
         for t in range(time_steps):
-            state_t = trajectory[t] # (batch_size, 3200)
-            
-            # Unflatten explicit geometries
-            # Ensure correct unflattening to extract (batch_size, 128, 12, 2)
-            # P_t takes the first 3072 elements per batch item
-            P_t = state_t[:, :3072].view(batch_size, 128, 12, 2)
-            aliveness_t = state_t[:, 3072:].view(batch_size, 128)
-            
             batch_frames = []
             for b in range(batch_size):
-                # Apply differentiable smooth aliveness filter directly to alpha
-                smooth_alpha = alpha * torch.sigmoid(aliveness_t[b])
-
                 frame = self.rasterizer(
-                    P=P_t[b], 
-                    c=colors[b], 
-                    alpha=smooth_alpha, 
-                    alive=aliveness_t[b], 
-                    z=z, 
-                    csg=csg, 
-                    width=self.width, 
+                    P=P_all[t, b],
+                    c=colors[b],
+                    alpha=smooth_alpha_all[t, b],
+                    alive=aliveness_all[t, b],
+                    z=z,
+                    csg=csg,
+                    width=self.width,
                     height=self.height
                 )
                 batch_frames.append(frame)
-                
-            # Stack batch into (batch_size, H, W, 3)
-            batch_frames = torch.stack(batch_frames, dim=0)
-            video_frames.append(batch_frames)
-            
-        # 5. Native PyTorch video representations
-        # Stacking across lists gives (192, batch_size, H, W, 3) 
-        # Then transpose to match specs explicitly: (batch_size, 192, H, W, 3)
+            video_frames.append(torch.stack(batch_frames, dim=0))
+
+        # 6. Stack: list of (batch, H, W, 3) -> (T, batch, H, W, 3) -> (batch, T, H, W, 3)
         video_tensor = torch.stack(video_frames, dim=0).transpose(0, 1)
-        
-        # Prepare topological state dictionary for loss computation natively preserving graphs
-        # Extract explicit bounding maps mapping back to sequence parameters
-        # P shapes needed: (batch, 192, 128, 12, 2)
-        P_seq = trajectory[:, :, :3072].view(time_steps, batch_size, 128, 12, 2).transpose(0, 1)
-        
-        # aliveness shapes needed: (batch, 192, 128)
-        aliveness_seq = trajectory[:, :, 3072:].view(time_steps, batch_size, 128).transpose(0, 1)
-        
+
+        # 7. Topology dict for loss computation
+        P_seq = P_all.permute(1, 0, 2, 3, 4)       # (batch, T, 128, 12, 2)
+        aliveness_seq = aliveness_all.permute(1, 0, 2)  # (batch, T, 128)
+
         topology = {
-            'P': P_seq,               # (batch, T, slots, 12, 2)
-            'aliveness': aliveness_seq, # (batch, T, slots)
-            'colors': colors,          # (batch, slots, 3) 
+            'P': P_seq,
+            'aliveness': aliveness_seq,
+            'colors': colors,
             'alpha': alpha,
             'z': z,
             'csg': csg
         }
-        
+
         return video_tensor, topology

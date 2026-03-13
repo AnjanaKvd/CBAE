@@ -124,10 +124,13 @@ def compute_clip_score(
     clip_encoder: CLIPEncoder,
 ) -> float:
     """
-    CLIP cosine similarity between the mean rendered frame and the text prompt.
+    Real CLIP cosine similarity between sampled video frames and the text prompt.
+
+    Samples K=8 evenly-spaced frames, resizes to 224×224, encodes through
+    CLIP ViT image encoder, and returns mean cosine similarity.
 
     Args:
-        video_tensor: (1, T, H, W, 3)
+        video_tensor: (1, T, H, W, 3) rendered frames in [0, 1]
         prompt: text string
         clip_encoder: frozen CLIPEncoder instance
 
@@ -136,25 +139,32 @@ def compute_clip_score(
     """
     with torch.no_grad():
         text_emb = clip_encoder.encode_text(prompt)  # (1, 512)
+        text_emb = F.normalize(text_emb.float(), dim=-1)
 
-        # Average across time to get a single representative frame
-        mean_frame = video_tensor[0].mean(dim=0)  # (H, W, 3)
+        T = video_tensor.shape[1]
+        K = min(8, T)
+        frame_indices = torch.linspace(0, T - 1, K).long()
+        sampled = video_tensor[0, frame_indices]  # (K, H, W, 3)
 
-        # Flatten frame into a pseudo-embedding (projection placeholder)
-        frame_flat = mean_frame.reshape(-1)
-        # Project to 512 via simple linear interpolation (placeholder for a
-        # real CLIP ViT image encoder; sufficient for the benchmark scaffold)
-        if frame_flat.shape[0] != 512:
-            frame_emb = F.adaptive_avg_pool1d(
-                frame_flat.unsqueeze(0).unsqueeze(0), 512
-            ).squeeze()
-        else:
-            frame_emb = frame_flat
+        # Convert to (K, 3, H, W) and resize to 224×224
+        frames = sampled.permute(0, 3, 1, 2)  # (K, 3, H, W)
+        frames_224 = F.interpolate(frames, size=(224, 224), mode='bilinear', align_corners=False)
 
-        frame_emb = F.normalize(frame_emb.unsqueeze(0), dim=-1)
-        text_emb = F.normalize(text_emb, dim=-1)
+        # CLIP ImageNet normalization
+        mean = torch.tensor([0.48145466, 0.4578275, 0.40821073],
+                            device=frames_224.device).view(1, 3, 1, 1)
+        std = torch.tensor([0.26862954, 0.26130258, 0.27577711],
+                           device=frames_224.device).view(1, 3, 1, 1)
+        frames_norm = (frames_224 - mean) / std
 
-        sim = F.cosine_similarity(frame_emb, text_emb).item()
+        # Encode through CLIP ViT image encoder
+        image_emb = clip_encoder.model.encode_image(frames_norm)  # (K, 512)
+        image_emb = F.normalize(image_emb.float(), dim=-1)
+
+        # Mean frame embedding
+        mean_image_emb = F.normalize(image_emb.mean(dim=0, keepdim=True), dim=-1)
+
+        sim = F.cosine_similarity(mean_image_emb, text_emb).item()
 
     return sim
 
