@@ -10,6 +10,7 @@ models/__pycache__
 training/__pycache__
 evaluation/__pycache__
 data/__pycache__
+scripts/__pycache__
 
 .opencode
 opencode.json
