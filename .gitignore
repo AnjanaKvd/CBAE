@@ -1,5 +1,6 @@
 plan.md
 prompt.md
+
 core/__pycache__
 rendering/__pycache__
 tests/__pycache__
@@ -9,3 +10,7 @@ models/__pycache__
 training/__pycache__
 evaluation/__pycache__
 data/__pycache__
+
+.opencode
+opencode.json
+tui.json
