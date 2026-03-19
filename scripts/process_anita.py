@@ -8,7 +8,7 @@ Usage:
         --input_list data/real/anita_color_files.txt \
         --output_dir data/real/processed_anita/ \
         --sequence_length 48 \
-        --target_sequences 500
+        --target_sequences 112
 """
 
 import argparse
@@ -70,7 +70,7 @@ def frames_to_crf_sequence(frames: list, colors_lookup: np.ndarray = None,
             shapes=assigned,
             min_shapes=8,
             max_shapes=N_SLOTS,
-            max_fit_error=3.0,
+            max_fit_error=8.0,
         )
         if not ok:
             continue
@@ -96,10 +96,14 @@ def frames_to_crf_sequence(frames: list, colors_lookup: np.ndarray = None,
 
     # Compute velocities via finite differences
     dp_dts = []
-    for i in range(len(crf_frames)):
-        if i == 0:
+    n_crf = len(crf_frames)
+    for i in range(n_crf):
+        if n_crf == 1:
+            # Only one frame — zero velocity
+            v = np.zeros_like(crf_frames[0].P, dtype=np.float32)
+        elif i == 0:
             v = crf_frames[1].P.astype(np.float32) - crf_frames[0].P.astype(np.float32)
-        elif i == len(crf_frames) - 1:
+        elif i == n_crf - 1:
             v = crf_frames[-1].P.astype(np.float32) - crf_frames[-2].P.astype(np.float32)
         else:
             v = (crf_frames[i + 1].P.astype(np.float32) - crf_frames[i - 1].P.astype(np.float32)) / 2.0
@@ -113,9 +117,20 @@ def process_anita(input_list: str, output_dir: str,
     """Main processing loop."""
     os.makedirs(output_dir, exist_ok=True)
 
+    # Resolve paths relative to the project root (parent of scripts/)
+    project_root = Path(__file__).resolve().parent.parent
+
     # Group files by scene directory
     with open(input_list) as f:
-        all_files = [line.strip() for line in f if line.strip()]
+        raw_lines = [line.strip() for line in f if line.strip()]
+
+    # Normalise each path: if relative, resolve against project root
+    all_files = []
+    for line in raw_lines:
+        p = Path(line)
+        if not p.is_absolute():
+            p = project_root / p
+        all_files.append(str(p))
 
     scenes = {}
     for fpath in all_files:

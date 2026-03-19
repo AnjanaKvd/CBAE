@@ -16,3 +16,5 @@ scripts/__pycache__
 opencode.json
 opencode.*
 tui.json
+
+data/synthetic/clean/*
