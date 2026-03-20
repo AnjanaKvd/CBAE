@@ -4,6 +4,8 @@ Training configuration constants for CBAE multi-stage training.
 Follows CBAE_TRAINING_GUIDE.md Step 1.1.
 """
 
+import torch
+
 # ── Batch & Epoch Settings ──────────────────────────────────────────────────
 BATCH_SIZE          = 2       # DO NOT increase — checkpointed adjoint limits this
 N_EPOCHS_CLEAN      = 50
@@ -36,4 +38,4 @@ LOG_FILE         = 'training_log.csv'
 # ── Canvas & Sequence ──────────────────────────────────────────────────────
 CANVAS_SIZE      = (512, 512)
 SEQUENCE_LENGTH  = 192        # frames per sequence
-DEVICE           = 'cpu'      # force CPU — matches hardware target
+DEVICE           = 'cuda' if torch.cuda.is_available() else 'cpu'
