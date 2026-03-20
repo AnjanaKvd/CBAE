@@ -213,22 +213,16 @@ def soft_rasterize_approximation(
     active_P = P[render_order]                              # (M, 12, 2)
     polylines = bezier_to_polyline_torch(active_P, n_samples=30)  # (M, 30, 2)
 
-    # --- BATCH: Compute all SDFs in chunks to limit VRAM ---
+    # --- BATCH: Compute all SDFs at once ---
     y_coords = torch.linspace(0, 1, height, device=device)
     x_coords = torch.linspace(0, 1, width, device=device)
     grid_y, grid_x = torch.meshgrid(y_coords, x_coords, indexing="ij")
     grid = torch.stack([grid_x, grid_y], dim=-1)            # (H, W, 2)
 
-    # Process SDF in chunks to avoid OOM on GPU
-    chunk_size = max(1, min(16, M))  # Process at most 16 shapes at a time
-    all_coverage_list = []
-    for start in range(0, M, chunk_size):
-        end = min(start + chunk_size, M)
-        chunk_polylines = polylines[start:end]               # (chunk, 30, 2)
-        chunk_sdf = signed_distance_field_batched(grid, chunk_polylines)
-        chunk_coverage = torch.sigmoid(-chunk_sdf / softness)
-        all_coverage_list.append(chunk_coverage)
-    all_coverage = torch.cat(all_coverage_list, dim=0)       # (M, H, W)
+    all_sdf = signed_distance_field_batched(grid, polylines)  # (M, H, W)
+
+    # --- BATCH: Compute all coverages at once ---
+    all_coverage = torch.sigmoid(-all_sdf / softness)        # (M, H, W)
 
     active_alphas = shape_alphas[render_order]               # (M,)
     active_colors = c[render_order]                          # (M, 3)

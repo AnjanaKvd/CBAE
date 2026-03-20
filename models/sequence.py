@@ -16,7 +16,7 @@ class SequenceModel(nn.Module):
     def __init__(self, n_steps=192):
         super().__init__()
         self.n_steps = n_steps
-        # 1. Encoders (kept on CPU to save GPU VRAM — outputs are moved in forward)
+        # 1. Encoders
         self.clip = CLIPEncoder()
         self.whisper = WhisperEncoder()
         
@@ -35,18 +35,6 @@ class SequenceModel(nn.Module):
         
         # 5. Neural ODE
         self.ode_fx = ODEFx()
-
-    def to(self, *args, **kwargs):
-        """Override to keep frozen encoders on CPU (saves ~800MB GPU VRAM)."""
-        # Move everything except CLIP and Whisper
-        device = args[0] if args else kwargs.get('device', None)
-        for name, module in self.named_children():
-            if name in ('clip', 'whisper'):
-                continue  # Keep on CPU
-            module.to(*args, **kwargs)
-        # Update the device attribute without moving clip/whisper
-        self._device_hint = device
-        return self
 
     def forward(self, prompt: str, audio: torch.Tensor) -> torch.Tensor:
         """
