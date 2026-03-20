@@ -22,6 +22,4 @@ data/synthetic/clean_test/*
 data/synthetic/bridge/*
 data/synthetic/robustness/*
 
-checkpoints/stage1/*
-checkpoints/stage2/*
-checkpoints/test/*
+*.pt
