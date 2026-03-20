@@ -32,6 +32,9 @@ class CLIPEncoder(nn.Module):
             
         with torch.no_grad():
             text_tokens = self.tokenizer(text)
+            # Move tokens to same device as model weights
+            device = next(self.model.parameters()).device
+            text_tokens = text_tokens.to(device)
             text_features = self.model.encode_text(text_tokens)
             
             # Normalize to unit vector
@@ -78,6 +81,9 @@ class WhisperEncoder(nn.Module):
                 return_tensors="pt"
             )
             input_features = inputs.input_features
+            # Move features to same device as encoder weights
+            device = next(self.encoder.parameters()).device
+            input_features = input_features.to(device)
             
             outputs = self.encoder(input_features)
             
