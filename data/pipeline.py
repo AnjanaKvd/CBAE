@@ -46,6 +46,11 @@ def quantize_colors(frame: np.ndarray, k: int = 16):
     """
     lab = cv2.cvtColor(frame, cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(float)
 
+    # Clamp k to the number of actual unique colors (downsampled for speed)
+    small = cv2.resize(frame, (64, 64))
+    n_unique = len(np.unique(small.reshape(-1, 3), axis=0))
+    k = min(k, max(n_unique, 2))  # at least 2 clusters
+
     best_km, best_inertia = None, float("inf")
     for seed in [0, 42, 99]:
         km = KMeans(n_clusters=k, random_state=seed, n_init=1, max_iter=50)

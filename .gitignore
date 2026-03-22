@@ -23,4 +23,6 @@ data/synthetic/bridge/*
 data/synthetic/robustness/*
 
 *.pt
+*.h5
 data/real/*
+data/mixed/*

@@ -41,6 +41,7 @@ from training.config import (
     CHECKPOINT_DIR,
     LOG_FILE,
     DEVICE,
+    LOSS_WEIGHTS,
 )
 from data.dataset import CBAEDataset
 
@@ -186,7 +187,16 @@ def main() -> None:
         render_height=render_size,
         n_steps=max_frames,
     ).to(device)
-    loss_fn = CBAELossWrapper().to(device)
+    
+    loss_fn = CBAELossWrapper(
+        w_render=LOSS_WEIGHTS['render'],
+        w_bcs=LOSS_WEIGHTS['smooth'],
+        w_crs=LOSS_WEIGHTS['alive'],
+        w_temp=LOSS_WEIGHTS['smooth'], # roughly maps to temp
+        w_clip=LOSS_WEIGHTS['semantic'],
+        clip_model=model.seq_model.clip.model,
+        clip_preprocess=model.seq_model.clip.preprocess,
+    ).to(device)
 
     # ── Resume ─────────────────────────────────────────────────────────────
     start_epoch = 1
