@@ -80,7 +80,7 @@ class TemplateLibrary:
 
 
 class DeformationMLP(nn.Module):
-    def __init__(self, text_dim=512, slot_dim=64, hidden1=256, hidden2=128, ctrl_pts=N_CTRL_PTS):
+    def __init__(self, text_dim=512, slot_dim=512, hidden1=256, hidden2=128, ctrl_pts=N_CTRL_PTS):
         super().__init__()
         in_dim = text_dim + slot_dim
         out_dim = ctrl_pts * 2  # 12 control points * 2 coords = 24

@@ -9,7 +9,6 @@ Usage:
     audio, gt_video = ds[0]
 """
 
-import os
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -18,7 +17,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from core.crf_tensor import CRFTensor, CRFSequence
+from core.crf_tensor import CRFTensor
 
 
 class CBAEDataset(Dataset):
@@ -69,8 +68,23 @@ class CBAEDataset(Dataset):
     def __len__(self) -> int:
         return len(self.h5_files)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[dict, torch.Tensor]:
         h5_path = self.h5_files[idx]
+
+        # Load topology 0 from HDF5
+        with h5py.File(h5_path, "r") as f:
+            if "P" not in f or f["P"].size == 0:
+                topology_0 = {
+                    'P': torch.zeros(128, 12, 2, dtype=torch.float32),
+                    'colors': torch.zeros(128, 3, dtype=torch.float32),
+                    'alive': torch.zeros(128, dtype=torch.float32)
+                }
+            else:
+                topology_0 = {
+                    'P': torch.from_numpy(f["P"][0]).float(),
+                    'colors': torch.from_numpy(f["c"][0]).float(),
+                    'alive': torch.from_numpy(f["alive"][0]).float()
+                }
 
         # Check cache
         if self.cache_renders and h5_path in self._cache:
@@ -80,10 +94,7 @@ class CBAEDataset(Dataset):
             if self.cache_renders:
                 self._cache[h5_path] = gt_video
 
-        # Silent audio placeholder
-        audio = torch.zeros(self.audio_len, dtype=torch.float32)
-
-        return audio, gt_video
+        return topology_0, gt_video
 
     def _load_and_render(self, h5_path: str) -> torch.Tensor:
         """Load CRF sequence from HDF5 and rasterise each frame."""

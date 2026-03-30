@@ -42,6 +42,7 @@ from training.config import (
     LOG_FILE,
     DEVICE,
     LOSS_WEIGHTS,
+    DATA_DIR_MIXED,
 )
 from data.dataset import CBAEDataset
 
@@ -55,16 +56,53 @@ log = logging.getLogger("CBAE-trainer")
 
 # ── Stage → default config ─────────────────────────────────────────────────
 STAGE_DEFAULTS = {
-    "clean":      {"data_dir": DATA_DIR_CLEAN,   "epochs": N_EPOCHS_CLEAN,      "lr": LR_INIT},
-    "robustness": {"data_dir": DATA_DIR_ROBUST,  "epochs": N_EPOCHS_ROBUSTNESS, "lr": 1e-4},
-    "bridge":     {"data_dir": DATA_DIR_BRIDGE,  "epochs": N_EPOCHS_BRIDGE,     "lr": 1e-4},
-    "mixed":      {"data_dir": "data/mixed/",    "epochs": 30,                  "lr": 5e-5},
-    "mixed_30":   {"data_dir": "data/mixed/",    "epochs": 20,                  "lr": 2e-5},
-    "mixed_50":   {"data_dir": "data/mixed/",    "epochs": 20,                  "lr": 1e-5},
+    "clean": {
+        "epochs": N_EPOCHS_CLEAN,
+        "lr": LR_INIT,
+        "data_dir": DATA_DIR_CLEAN,
+        "max_frames": 16,
+        "batch_size": BATCH_SIZE,
+    },
+    "robustness": {
+        "epochs": N_EPOCHS_ROBUSTNESS,
+        "lr": 1e-4,
+        "data_dir": DATA_DIR_ROBUST,
+        "max_frames": 4,
+        "batch_size": BATCH_SIZE,
+    },
+    "bridge": {
+        "epochs": N_EPOCHS_BRIDGE,
+        "lr": 1e-4,
+        "data_dir": DATA_DIR_BRIDGE,
+        "max_frames": 4,
+        "batch_size": BATCH_SIZE,
+    },
+    "mixed": {
+        "epochs": 30,
+        "lr": 5e-5,
+        "data_dir": DATA_DIR_MIXED,
+        "max_frames": 16,
+        "batch_size": 2,
+    },
+    "mixed_30": {
+        "data_dir": "data/mixed/",
+        "epochs": 20,
+        "lr": 2e-5,
+        "max_frames": 4,
+        "batch_size": BATCH_SIZE,
+    },
+    "mixed_50": {
+        "data_dir": "data/mixed/",
+        "epochs": 20,
+        "lr": 1e-5,
+        "max_frames": 4,
+        "batch_size": BATCH_SIZE,
+    },
 }
 
 
 # ── CSV Logger ──────────────────────────────────────────────────────────────
+
 
 class CSVLogger:
     """Append-mode CSV logger for training metrics."""
@@ -85,6 +123,7 @@ class CSVLogger:
 
 # ── Training Loop ───────────────────────────────────────────────────────────
 
+
 def train_one_epoch(
     model: CBAE_EndToEnd,
     dataloader: DataLoader,
@@ -97,20 +136,27 @@ def train_one_epoch(
     model.train()
 
     epoch_metrics = {
-        "total": 0.0, "render": 0.0, "bcs": 0.0,
-        "crs": 0.0, "temp": 0.0, "clip": 0.0,
+        "total": 0.0,
+        "render": 0.0,
+        "bcs": 0.0,
+        "crs": 0.0,
+        "temp": 0.0,
+        "kl": 0.0,
+        "topo": 0.0,
     }
     n_batches = 0
 
-    for audio, gt_video in dataloader:
-        audio = audio.to(device)
+    for topology_0, gt_video in dataloader:
+        P_gt = topology_0["P"].to(device)
+        colors_gt = topology_0["colors"].to(device)
+        alive_gt = topology_0["alive"].to(device)
         gt_video = gt_video.to(device)
 
         # Forward
-        model_outputs = model(prompt, audio)
+        model_outputs = model(P=P_gt, colors=colors_gt, alive=alive_gt)
 
         # Loss
-        loss_total, metrics = loss_fn(model_outputs, gt_video)
+        loss_total, metrics = loss_fn(model_outputs, gt_video, topology_0)
 
         # Backward
         optimizer.zero_grad()
@@ -120,7 +166,7 @@ def train_one_epoch(
 
         # Accumulate
         epoch_metrics["total"] += loss_total.item()
-        for k in ["render", "bcs", "crs", "temp", "clip"]:
+        for k in ["render", "bcs", "crs", "temp", "kl", "topo"]:
             epoch_metrics[k] += metrics.get(k, 0.0)
         n_batches += 1
 
@@ -134,31 +180,64 @@ def train_one_epoch(
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="CBAE Multi-Stage Trainer")
-    p.add_argument("--stage", type=str, required=True,
-                   choices=list(STAGE_DEFAULTS.keys()),
-                   help="Training stage (clean/robustness/bridge/mixed)")
-    p.add_argument("--data_dir", type=str, default=None,
-                   help="Data directory (overrides stage default)")
-    p.add_argument("--epochs", type=int, default=None,
-                   help="Number of epochs (overrides stage default)")
-    p.add_argument("--lr", type=float, default=None,
-                   help="Learning rate (overrides stage default)")
-    p.add_argument("--batch_size", type=int, default=None,
-                   help=f"Batch size (default: {BATCH_SIZE})")
-    p.add_argument("--resume", type=str, default=None,
-                   help="Path to checkpoint to resume from")
-    p.add_argument("--checkpoint_dir", type=str, default=None,
-                   help="Checkpoint output directory")
-    p.add_argument("--save_every", type=int, default=5,
-                   help="Save checkpoint every N epochs")
-    p.add_argument("--loss_velocity_weight", type=float, default=None,
-                   help="Override velocity loss weight (0.0 for real data)")
-    p.add_argument("--render_size", type=int, default=32,
-                   help="Render resolution for GT frames (default: 32 for CPU)")
-    p.add_argument("--max_frames", type=int, default=4,
-                   help="Max frames per sequence (default: 4 for CPU)")
+    p.add_argument(
+        "--stage",
+        type=str,
+        required=True,
+        choices=list(STAGE_DEFAULTS.keys()),
+        help="Training stage (clean/robustness/bridge/mixed)",
+    )
+    p.add_argument(
+        "--data_dir",
+        type=str,
+        default=None,
+        help="Data directory (overrides stage default)",
+    )
+    p.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Number of epochs (overrides stage default)",
+    )
+    p.add_argument(
+        "--lr", type=float, default=None, help="Learning rate (overrides stage default)"
+    )
+    p.add_argument(
+        "--batch_size",
+        type=int,
+        default=None,
+        help=f"Batch size (default: {BATCH_SIZE})",
+    )
+    p.add_argument(
+        "--resume", type=str, default=None, help="Path to checkpoint to resume from"
+    )
+    p.add_argument(
+        "--checkpoint_dir", type=str, default=None, help="Checkpoint output directory"
+    )
+    p.add_argument(
+        "--save_every", type=int, default=5, help="Save checkpoint every N epochs"
+    )
+    p.add_argument(
+        "--loss_velocity_weight",
+        type=float,
+        default=None,
+        help="Override velocity loss weight (0.0 for real data)",
+    )
+    p.add_argument(
+        "--render_size",
+        type=int,
+        default=32,
+        help="Render resolution for GT frames (default: 32 for CPU)",
+    )
+    p.add_argument(
+        "--max_frames",
+        type=int,
+        default=4,
+        help="Max frames per sequence (default: 4 for CPU)",
+    )
     return p.parse_args()
 
 
@@ -177,8 +256,9 @@ def main() -> None:
 
     device = torch.device(DEVICE)
     log.info("Device: %s | Stage: %s", device, args.stage)
-    log.info("Data: %s | Epochs: %d | LR: %g | Batch: %d",
-             data_dir, epochs, lr, batch_size)
+    log.info(
+        "Data: %s | Epochs: %d | LR: %g | Batch: %d", data_dir, epochs, lr, batch_size
+    )
 
     # ── Model ──────────────────────────────────────────────────────────────
     log.info("Building CBAE_EndToEnd model …")
@@ -187,15 +267,13 @@ def main() -> None:
         render_height=render_size,
         n_steps=max_frames,
     ).to(device)
-    
+
     loss_fn = CBAELossWrapper(
-        w_render=LOSS_WEIGHTS['render'],
-        w_bcs=LOSS_WEIGHTS['smooth'],
-        w_crs=LOSS_WEIGHTS['alive'],
-        w_temp=LOSS_WEIGHTS['smooth'], # roughly maps to temp
-        w_clip=LOSS_WEIGHTS['semantic'],
-        clip_model=model.seq_model.clip.model,
-        clip_preprocess=model.seq_model.clip.preprocess,
+        w_render=LOSS_WEIGHTS["render"],
+        w_bcs=LOSS_WEIGHTS["smooth"],
+        w_crs=LOSS_WEIGHTS["alive"],
+        w_temp=LOSS_WEIGHTS["smooth"],
+        w_kl=1e-4,  # Start with a small KL weight for VAE regularization
     ).to(device)
 
     # ── Resume ─────────────────────────────────────────────────────────────
@@ -225,30 +303,46 @@ def main() -> None:
         max_frames=max_frames,
     )
     dataloader = DataLoader(
-        dataset, batch_size=batch_size,
-        shuffle=True, drop_last=True,
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=True,
     )
-    log.info("Dataset: %d sequences, %d batches/epoch",
-             len(dataset), len(dataloader))
+    log.info("Dataset: %d sequences, %d batches/epoch", len(dataset), len(dataloader))
 
     # ── Directories ────────────────────────────────────────────────────────
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # ── CSV logger ─────────────────────────────────────────────────────────
     csv_path = os.path.join(ckpt_dir, LOG_FILE)
-    csv_logger = CSVLogger(csv_path, [
-        "epoch", "total", "render", "bcs", "crs", "temp", "clip", "lr", "time_s",
-    ])
+    csv_logger = CSVLogger(
+        csv_path,
+        [
+            "epoch",
+            "total",
+            "render",
+            "bcs",
+            "crs",
+            "temp",
+            "kl",
+            "topo",
+            "lr",
+            "time_s",
+        ],
+    )
 
     # ── Training loop ──────────────────────────────────────────────────────
-    log.info("Starting training for %d epoch(s) (from epoch %d).",
-             epochs, start_epoch)
+    log.info("Starting training for %d epoch(s) (from epoch %d).", epochs, start_epoch)
 
     for epoch in range(start_epoch, start_epoch + epochs):
         t0 = time.time()
 
         metrics = train_one_epoch(
-            model, dataloader, loss_fn, optimizer, device,
+            model,
+            dataloader,
+            loss_fn,
+            optimizer,
+            device,
         )
 
         current_lr = optimizer.param_groups[0]["lr"]
@@ -257,42 +351,54 @@ def main() -> None:
 
         log.info(
             "Epoch %03d | %.1fs | total=%.4f render=%.4f bcs=%.4f "
-            "crs=%.4f temp=%.4f clip=%.4f | lr=%.2e",
-            epoch, elapsed,
-            metrics["total"], metrics["render"],
-            metrics["bcs"], metrics["crs"],
-            metrics["temp"], metrics["clip"],
+            "crs=%.4f temp=%.4f kl=%.4f topo=%.4f | lr=%.2e",
+            epoch,
+            elapsed,
+            metrics["total"],
+            metrics["render"],
+            metrics["bcs"],
+            metrics["crs"],
+            metrics["temp"],
+            metrics["kl"],
+            metrics["topo"],
             current_lr,
         )
 
         # CSV log
-        csv_logger.log({
-            "epoch": epoch,
-            "total": f"{metrics['total']:.6f}",
-            "render": f"{metrics['render']:.6f}",
-            "bcs": f"{metrics['bcs']:.6f}",
-            "crs": f"{metrics['crs']:.6f}",
-            "temp": f"{metrics['temp']:.6f}",
-            "clip": f"{metrics['clip']:.6f}",
-            "lr": f"{current_lr:.2e}",
-            "time_s": f"{elapsed:.1f}",
-        })
+        csv_logger.log(
+            {
+                "epoch": epoch,
+                "total": f"{metrics['total']:.6f}",
+                "render": f"{metrics['render']:.6f}",
+                "bcs": f"{metrics['bcs']:.6f}",
+                "crs": f"{metrics['crs']:.6f}",
+                "temp": f"{metrics['temp']:.6f}",
+                "kl": f"{metrics['kl']:.6f}",
+                "topo": f"{metrics['topo']:.6f}",
+                "lr": f"{current_lr:.2e}",
+                "time_s": f"{elapsed:.1f}",
+            }
+        )
 
         # Checkpoint
         if epoch % args.save_every == 0:
             ckpt_path = os.path.join(ckpt_dir, f"model_epoch_{epoch:04d}.pt")
-            torch.save({
-                "epoch": epoch,
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "scheduler": scheduler.state_dict(),
-                "metrics": metrics,
-                "stage": args.stage,
-            }, ckpt_path)
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict(),
+                    "metrics": metrics,
+                    "stage": args.stage,
+                },
+                ckpt_path,
+            )
             log.info("Checkpoint saved → %s", ckpt_path)
 
-    log.info("Training finished. Stage: %s | Final loss: %.4f",
-             args.stage, metrics["total"])
+    log.info(
+        "Training finished. Stage: %s | Final loss: %.4f", args.stage, metrics["total"]
+    )
 
 
 if __name__ == "__main__":

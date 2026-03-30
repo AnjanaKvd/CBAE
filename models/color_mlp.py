@@ -3,7 +3,7 @@ import torch.nn as nn
 from core.constants import N_SLOTS
 
 class ColorPredictionMLP(nn.Module):
-    def __init__(self, slot_dim=64, text_dim=512, hidden_dim=256, num_slots=N_SLOTS):
+    def __init__(self, slot_dim=512, text_dim=512, hidden_dim=256, num_slots=N_SLOTS):
         """
         Predicts robust (batch_size, 128, 3) colors based on text prompt + structural primitives.
         """

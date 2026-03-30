@@ -1,21 +1,17 @@
 #!/usr/bin/env python
 # scripts/generate_demo.py
 """
-Generate demo videos from a trained CBAE checkpoint.
+Generate demo videos from a trained CBAE unconditional checkpoint.
 
-Loads a trained model, runs inference on text prompts, re-rasterises
+Loads a VAE-ODE trained model, samples random latent vectors, re-rasterises
 the predicted topology at high resolution using the Cairo rasterizer,
 and outputs GIF + MP4 files.
 
 Usage:
     python scripts/generate_demo.py \
-        --checkpoint checkpoints/stage3_pretrain/model_epoch_0100.pt \
-        --output_dir demo_output/ \
-        --prompts "a blue character breathing" "a red figure standing"
-
-    python scripts/generate_demo.py \
-        --checkpoint checkpoints/stage3_pretrain/model_epoch_0100.pt \
-        --render_size 256 --fps 8
+        --checkpoint checkpoints/stage5_color_fix/model_epoch_0140.pt \
+        --output_dir demo_stage5/ \
+        --num_samples 5 --render_size 256 --fps 8
 """
 
 import argparse
@@ -39,15 +35,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("CBAE-demo")
 
-# ── Default prompts ─────────────────────────────────────────────────────────
-DEFAULT_PROMPTS = [
-    "a blue character standing and breathing slowly",
-    "a red figure with arms raised",
-    "a green character swaying gently",
-    "a character blinking its eyes",
-    "a purple figure waving hello",
-]
-
 
 def topology_to_frames(
     topology: dict,
@@ -60,15 +47,6 @@ def topology_to_frames(
 
     Takes the predicted P, colors, aliveness, alpha, z, csg from model output
     and renders each frame at render_size × render_size.
-
-    Args:
-        topology:     dict from CBAE_EndToEnd.forward()
-        video_tensor: (batch, T, H, W, 3) — used only for T dimension
-        render_size:  output resolution (width = height)
-        batch_idx:    which batch item to render
-
-    Returns:
-        List of (H, W, 3) uint8 numpy arrays
     """
     P_seq = topology["P"][batch_idx]            # (T, 128, 12, 2)
     aliveness_seq = topology["aliveness"][batch_idx]  # (T, 128)
@@ -124,20 +102,20 @@ def save_mp4(frames: list, path: str, fps: int = 8):
 
 def create_comparison_grid(all_frames: dict, render_size: int) -> list:
     """
-    Create a side-by-side comparison grid from multiple prompts.
+    Create a side-by-side comparison grid from multiple samples.
     Returns list of composite frames.
     """
-    prompts = list(all_frames.keys())
-    n_prompts = len(prompts)
+    sample_names = list(all_frames.keys())
+    n_samples = len(sample_names)
 
-    if n_prompts == 0:
+    if n_samples == 0:
         return []
 
-    T = len(all_frames[prompts[0]])
+    T = len(all_frames[sample_names[0]])
 
     # Layout: up to 3 per row
-    cols = min(n_prompts, 3)
-    rows = (n_prompts + cols - 1) // cols
+    cols = min(n_samples, 3)
+    rows = (n_samples + cols - 1) // cols
 
     grid_w = cols * render_size
     grid_h = rows * render_size
@@ -146,14 +124,14 @@ def create_comparison_grid(all_frames: dict, render_size: int) -> list:
     for t in range(T):
         canvas = np.zeros((grid_h, grid_w, 3), dtype=np.uint8)
 
-        for i, prompt in enumerate(prompts):
+        for i, name in enumerate(sample_names):
             r, c = divmod(i, cols)
             y0 = r * render_size
             x0 = c * render_size
 
-            if t < len(all_frames[prompt]):
+            if t < len(all_frames[name]):
                 canvas[y0:y0 + render_size, x0:x0 + render_size] = \
-                    all_frames[prompt][t]
+                    all_frames[name][t]
 
         composite_frames.append(canvas)
 
@@ -161,13 +139,13 @@ def create_comparison_grid(all_frames: dict, render_size: int) -> list:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate CBAE demo videos")
+    parser = argparse.ArgumentParser(description="Generate CBAE unconditional demo videos")
     parser.add_argument("--checkpoint", type=str, required=True,
                         help="Path to trained checkpoint (.pt)")
     parser.add_argument("--output_dir", type=str, default="demo_output",
                         help="Output directory for videos")
-    parser.add_argument("--prompts", type=str, nargs="+", default=None,
-                        help="Text prompts for generation")
+    parser.add_argument("--num_samples", type=int, default=5,
+                        help="Number of random animations to generate")
     parser.add_argument("--render_size", type=int, default=256,
                         help="Render resolution (default: 256)")
     parser.add_argument("--model_render_size", type=int, default=32,
@@ -176,11 +154,12 @@ def main():
                         help="Frames per sequence (must match training)")
     parser.add_argument("--fps", type=int, default=8,
                         help="Output video FPS")
+    parser.add_argument("--latent_dim", type=int, default=512,
+                        help="Dimension of the latent seed z")
     parser.add_argument("--no_grid", action="store_true",
                         help="Skip comparison grid generation")
     args = parser.parse_args()
 
-    prompts = args.prompts or DEFAULT_PROMPTS
     os.makedirs(args.output_dir, exist_ok=True)
 
     device = torch.device("cpu")
@@ -196,23 +175,30 @@ def main():
 
     log.info("Loading checkpoint: %s", args.checkpoint)
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model"])
+    
+    # Check for strict=False since we removed CLIP/Whisper and added VAE in the pivot
+    model.load_state_dict(ckpt["model"], strict=False)
     model.eval()
 
     stage = ckpt.get("stage", "unknown")
     epoch = ckpt.get("epoch", "?")
-    log.info("Loaded: stage=%s, epoch=%s", stage, epoch)
+    log.info("Loaded: stage=%s, epoch=%s \n(Note: using strict=False to bypass missing CLIP/Whisper keys)", stage, epoch)
 
     # ── Generate ───────────────────────────────────────────────────────────
     all_frames = {}
-    dummy_audio = torch.zeros(1, 8 * 16000)  # silent audio, batch=1
 
-    for i, prompt in enumerate(prompts):
-        log.info("[%d/%d] Generating: \"%s\"", i + 1, len(prompts), prompt)
+    for i in range(args.num_samples):
+        sample_name = f"Sample_{i+1:02d}"
+        log.info("[%d/%d] Generating: %s", i + 1, args.num_samples, sample_name)
 
         t0 = time.time()
+        
+        # Sample random latent seed
+        z = torch.randn(1, args.latent_dim, device=device)
+        
         with torch.no_grad():
-            video_tensor, topology = model(prompt, dummy_audio)
+            video_tensor, topology = model(z=z)
+            
         inference_time = time.time() - t0
         log.info("  Inference: %.1fs", inference_time)
 
@@ -223,17 +209,16 @@ def main():
             render_size=args.render_size,
             batch_idx=0,
         )
-        all_frames[prompt] = frames
+        all_frames[sample_name] = frames
         log.info("  Got %d frames", len(frames))
 
         # Save individual GIF
-        safe_name = prompt.replace(" ", "_")[:40]
-        gif_path = os.path.join(args.output_dir, f"{i:02d}_{safe_name}.gif")
+        gif_path = os.path.join(args.output_dir, f"{sample_name}.gif")
         save_gif(frames, gif_path, fps=args.fps)
 
         # Save individual MP4
         try:
-            mp4_path = os.path.join(args.output_dir, f"{i:02d}_{safe_name}.mp4")
+            mp4_path = os.path.join(args.output_dir, f"{sample_name}.mp4")
             save_mp4(frames, mp4_path, fps=args.fps)
         except Exception as e:
             log.warning("  MP4 save failed (ffmpeg missing?): %s", e)
@@ -255,7 +240,7 @@ def main():
     log.info("═" * 50)
     log.info("Demo generation complete!")
     log.info("  Checkpoint: %s (stage=%s, epoch=%s)", args.checkpoint, stage, epoch)
-    log.info("  Prompts: %d", len(prompts))
+    log.info("  Generated: %d random samples", args.num_samples)
     log.info("  Resolution: %dx%d", args.render_size, args.render_size)
     log.info("  Output: %s", os.path.abspath(args.output_dir))
     log.info("═" * 50)

@@ -4,7 +4,7 @@ from core.crf_tensor import CRFTensor
 from core.constants import N_SLOTS, N_CTRL_PTS
 
 class AlivenessMLP(nn.Module):
-    def __init__(self, slot_dim=64, hidden_dim=32):
+    def __init__(self, slot_dim=512, hidden_dim=32):
         """
         Computes the initial aliveness logit for each slot.
         """

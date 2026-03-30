@@ -1,33 +1,35 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from rendering.diff_rasterizer import bezier_to_polyline_torch
 
 
 
 class CBAELossWrapper(nn.Module):
-    def __init__(self, w_render=1.0, w_bcs=0.1, w_crs=0.1, w_temp=0.5, w_clip=0.1,
-                 clip_model=None, clip_preprocess=None):
+    def __init__(self, w_render=1.0, w_bcs=0.1, w_crs=0.1, w_temp=0.5, w_kl=1e-4, w_topo=10.0):
         """
-        Combined loss for CBAE training: render L1 + BCS + CRS + temporal coherence + CLIP contrastive.
-
-        Args:
-            clip_model: Optional open_clip model instance (shared from CLIPEncoder.model).
-                        If None, CLIP loss returns 0.0 (backward-compatible).
-            clip_preprocess: Optional CLIP image preprocessing transform.
+        Combined loss for CBAE VAE-ODE training: render L1 + BCS + CRS + temporal coherence + KL Divergence + Topology.
         """
         super().__init__()
         self.w_render = w_render
         self.w_bcs = w_bcs
         self.w_crs = w_crs
         self.w_temp = w_temp
-        self.w_clip = w_clip
-
-        self.clip_model = clip_model
-        self.clip_preprocess = clip_preprocess
+        self.w_kl = w_kl
+        self.w_topo = w_topo
 
         self.l1_loss = nn.L1Loss()
         
+    def compute_kl_loss(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+        """
+        Computes the KL divergence loss for the VAE to regularize the latent space.
+        D_KL(N(mu, sigma) || N(0, 1))
+        """
+        if mu is None or logvar is None:
+            return torch.tensor(0.0, device=next(self.parameters()).device)
+        # KL loss: -0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+        kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
+        return kl_div.mean()
+
     def compute_bcs(self, P: torch.Tensor, aliveness: torch.Tensor) -> torch.Tensor:
         """
         Computes the Boundary Constraint Score mapping curvature smoothly filtering extreme changes temporally.
@@ -128,67 +130,14 @@ class CBAELossWrapper(nn.Module):
         
         return loss_alive + loss_P
 
-    def compute_clip_loss(self, video_tensor: torch.Tensor, prompt_emb: torch.Tensor) -> torch.Tensor:
-        """
-        Contrastive CLIP loss: encodes sampled video frames through CLIP ViT image
-        encoder and measures cosine similarity with the text embedding.
-
-        Args:
-            video_tensor: (batch, T, H, W, 3) rendered frames in [0, 1]
-            prompt_emb: (batch, 512) normalized CLIP text embedding
-
-        Returns:
-            Scalar loss = 1 - mean_cosine_similarity  (lower = better alignment).
-            Returns 0.0 if no clip_model was provided (backward-compatible).
-        """
-        if self.clip_model is None:
-            return torch.tensor(0.0, device=video_tensor.device)
-
-        batch, T, H, W, C = video_tensor.shape
-
-        # Sample K=8 evenly spaced frames (every 24th from 192)
-        K = min(8, T)
-        frame_indices = torch.linspace(0, T - 1, K).long()
-        sampled = video_tensor[:, frame_indices]  # (batch, K, H, W, 3)
-
-        # Reshape to (batch*K, 3, H, W) for interpolation
-        frames = sampled.reshape(batch * K, H, W, C).permute(0, 3, 1, 2)  # (B*K, 3, H, W)
-
-        # Resize to CLIP input size (224×224) — bilinear for differentiability
-        frames_224 = F.interpolate(frames, size=(224, 224), mode='bilinear', align_corners=False)
-
-        # CLIP ImageNet normalization (mean/std from OpenAI CLIP)
-        mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], device=frames_224.device).view(1, 3, 1, 1)
-        std = torch.tensor([0.26862954, 0.26130258, 0.27577711], device=frames_224.device).view(1, 3, 1, 1)
-        frames_norm = (frames_224 - mean) / std
-
-        # Encode frames through CLIP image encoder
-        image_emb = self.clip_model.encode_image(frames_norm)  # (B*K, 512)
-        image_emb = F.normalize(image_emb.float(), dim=-1)
-        image_emb = image_emb.reshape(batch, K, -1)  # (batch, K, 512)
-
-        # Mean frame embedding per batch item
-        mean_image_emb = image_emb.mean(dim=1)  # (batch, 512)
-        mean_image_emb = F.normalize(mean_image_emb, dim=-1)
-
-        # Normalize text embedding
-        prompt_emb_norm = F.normalize(prompt_emb.float(), dim=-1)
-
-        # Cosine similarity per batch item
-        cos_sim = F.cosine_similarity(mean_image_emb, prompt_emb_norm, dim=-1)  # (batch,)
-
-        # Loss: 1 - mean similarity (lower loss = better alignment)
-        loss = (1.0 - cos_sim.mean())
-        return loss
-
-    def forward(self, model_outputs: tuple, gt_video: torch.Tensor, prompt_emb: torch.Tensor = None) -> tuple:
+    def forward(self, model_outputs: tuple, gt_video: torch.Tensor, gt_topology_0: dict = None) -> tuple:
         """
         Calculates gradients executing constraints logic seamlessly passing parameters backward updating states directly.
         
         Args:
             model_outputs: (video_tensor, topology_dict)
             gt_video: target ground truth array configuration natively shaped identical mathematically to outputs
-            prompt_emb: Encoded text configurations natively matching layouts mapping explicitly over outputs.
+            gt_topology_0: target initial frame topology dictionary. If passed, guides VAE encoder reconstruction.
             
         Returns:
             loss_total, metrics_dict
@@ -207,22 +156,31 @@ class CBAELossWrapper(nn.Module):
         loss_crs = self.compute_crs(colors, aliveness)
         loss_temp = self.compute_temporal_coherence(P, aliveness)
         
-        # 3. Text Prompt semantic tracking
-        loss_clip = torch.tensor(0.0, device=P.device)
-        if prompt_emb is not None:
-            loss_clip = self.compute_clip_loss(video_tensor, prompt_emb)
+        # 3. VAE Latent Regularization
+        loss_kl = self.compute_kl_loss(topology.get('mu'), topology.get('logvar'))
         
+        # 4. Topological Initial State Reconstruction (fixes zero-overlap gradient collapse)
+        loss_topo = torch.tensor(0.0, device=video_tensor.device)
+        if gt_topology_0 is not None:
+            P_pred_0 = P[:, 0] # (batch, 128, 12, 2)
+            loss_P = nn.functional.mse_loss(P_pred_0, gt_topology_0['P'].to(video_tensor.device))
+            loss_c = nn.functional.mse_loss(colors, gt_topology_0['colors'].to(video_tensor.device))
+            loss_a = nn.functional.mse_loss(aliveness[:, 0], gt_topology_0['alive'].to(video_tensor.device))
+            loss_topo = loss_P + loss_c + loss_a
+            
         # Accumulate metrics
         loss_total = (self.w_render * loss_render) + \
                      (self.w_bcs * loss_bcs) + \
                      (self.w_crs * loss_crs) + \
                      (self.w_temp * loss_temp) + \
-                     (self.w_clip * loss_clip)
+                     (self.w_kl * loss_kl) + \
+                     (self.w_topo * loss_topo)
                      
         return loss_total, {
             'bcs': loss_bcs.item(),
             'crs': loss_crs.item(),
             'temp': loss_temp.item(),
             'render': loss_render.item(),
-            'clip': loss_clip.item()
+            'kl': loss_kl.item(),
+            'topo': loss_topo.item()
         }

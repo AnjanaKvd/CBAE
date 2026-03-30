@@ -26,3 +26,8 @@ data/synthetic/robustness/*
 *.h5
 data/real/*
 data/mixed/*
+
+checkpoints/*
+demo_vae_mixed/*
+demo_vae_topofix/*
+unconditional_demo/*

@@ -16,30 +16,30 @@ class CBAE_EndToEnd(nn.Module):
         self.width = render_width
         self.height = render_height
         
-    def forward(self, prompt: str, audio: torch.Tensor) -> torch.Tensor:
+    def forward(self, P=None, colors=None, alive=None, z=None) -> tuple:
         """
-        Full CBAE forward pass: encode → ODE integrate → rasterize.
+        Full CBAE VAE-ODE forward pass: encode topology → ODE integrate → rasterize.
 
         Args:
-            prompt: Text condition
-            audio: Raw audio waveform tensor
+            P, colors, alive: Frame 0 ground truth topology (for training)
+            z: Latent random seed (for generation)
 
         Returns:
             video_tensor: (batch_size, T, height, width, 3)
-            topology: dict with P, aliveness, colors, alpha, z, csg
+            topology: dict with P, aliveness, colors, alpha, z, csg, mu, logvar
         """
         device = next(self.parameters()).device
 
         # 1. Integrate geometries via Neural ODE
-        trajectory, slot_embs, text_emb, base_crf = self.seq_model(prompt, audio)
+        trajectory, slot_embs, latent_z, base_crf, mu, logvar = self.seq_model(P, colors, alive, z)
 
         # 2. Extract static properties from base CRF (shared across all timesteps)
         alpha = torch.from_numpy(base_crf.alpha).float().to(device)
-        z = torch.from_numpy(base_crf.z).float().to(device)
+        z_depth = torch.from_numpy(base_crf.z).float().to(device)
         csg = torch.from_numpy(base_crf.csg).bool().to(device)
 
         # 3. Predict colors (time-independent)
-        colors = self.color_mlp(slot_embs, text_emb)  # (batch, 128, 3)
+        predicted_colors = self.color_mlp(slot_embs, latent_z)  # (batch, 128, 3)
 
         time_steps, batch_size, _ = trajectory.shape
 
@@ -59,10 +59,10 @@ class CBAE_EndToEnd(nn.Module):
             for b in range(batch_size):
                 frame = self.rasterizer(
                     P=P_all[t, b],
-                    c=colors[b],
+                    c=predicted_colors[b],
                     alpha=smooth_alpha_all[t, b],
                     alive=aliveness_all[t, b],
-                    z=z,
+                    z=z_depth,
                     csg=csg,
                     width=self.width,
                     height=self.height
@@ -80,10 +80,13 @@ class CBAE_EndToEnd(nn.Module):
         topology = {
             'P': P_seq,
             'aliveness': aliveness_seq,
-            'colors': colors,
+            'colors': predicted_colors,
             'alpha': alpha,
-            'z': z,
-            'csg': csg
+            'z': z_depth,
+            'csg': csg,
+            'latent_z': latent_z,
+            'mu': mu,
+            'logvar': logvar
         }
 
         return video_tensor, topology
