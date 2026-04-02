@@ -156,11 +156,23 @@ def main():
                         help="Output video FPS")
     parser.add_argument("--latent_dim", type=int, default=512,
                         help="Dimension of the latent seed z")
+    parser.add_argument("--temperature", type=float, default=1.0,
+                        help="Sampling temperature: >1 = more diversity, <1 = more conservative")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed (omit for different output every run)")
     parser.add_argument("--no_grid", action="store_true",
                         help="Skip comparison grid generation")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
+
+    # Set seed only if explicitly requested; otherwise each run is fully random
+    if args.seed is not None:
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        log.info("Random seed: %d", args.seed)
+    else:
+        log.info("No fixed seed — each sample will be unique")
 
     device = torch.device("cpu")
     log.info("Device: %s", device)
@@ -193,8 +205,9 @@ def main():
 
         t0 = time.time()
         
-        # Sample random latent seed
-        z = torch.randn(1, args.latent_dim, device=device)
+        # Sample random latent seed; temperature amplifies variance to break collapse
+        z = torch.randn(1, args.latent_dim, device=device) * args.temperature
+        log.info("  Latent seed norm: %.3f (temperature=%.1f)", z.norm().item(), args.temperature)
         
         with torch.no_grad():
             video_tensor, topology = model(z=z)

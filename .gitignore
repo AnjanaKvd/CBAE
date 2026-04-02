@@ -31,3 +31,6 @@ checkpoints/*
 demo_vae_mixed/*
 demo_vae_topofix/*
 unconditional_demo/*
+demo_long/*
+demo_temp3/*
+demo_final/*
